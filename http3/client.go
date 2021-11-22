@@ -224,7 +224,6 @@ func (c *client) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Method = http.MethodGet
 	} else {
 		// wait for the handshake to complete
-		// TODO: handle in case TCP is faster for Happy Eyeballs
 		select {
 		case <-c.session.HandshakeComplete().Done():
 		case <-req.Context().Done():

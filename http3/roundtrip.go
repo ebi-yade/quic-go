@@ -1,11 +1,13 @@
 package http3
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"strings"
 	"sync"
 
@@ -56,6 +58,9 @@ type RoundTripper struct {
 	// Zero means to use a default limit.
 	MaxResponseHeaderBytes int64
 
+	// See https://www.ietf.org/archive/id/draft-ietf-quic-http-34.html#section-3.1.
+	ConnectionDiscovery
+
 	clients map[string]roundTripCloser
 }
 
@@ -68,6 +73,18 @@ type RoundTripOpt struct {
 	// This allows the use of different schemes, e.g. masque://target.example.com:443/.
 	SkipSchemeCheck bool
 }
+
+type subTrip struct {
+	res *http.Response
+	err error
+}
+
+type ConnectionDiscovery int
+
+const (
+	ConnectionDiscoveryAltSvc ConnectionDiscovery = iota
+	ConnectionDiscoveryHappyEyeballs
+)
 
 var _ roundTripCloser = &RoundTripper{}
 
@@ -115,7 +132,45 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 	if err != nil {
 		return nil, err
 	}
-	return cl.RoundTrip(req)
+
+	switch r.ConnectionDiscovery {
+	case ConnectionDiscoveryAltSvc:
+		return cl.RoundTrip(req)
+	case ConnectionDiscoveryHappyEyeballs:
+		subTrips := &[]subTrip{}
+		ctxQuic, cancelQuic := context.WithCancel(req.Context())
+		trace := &httptrace.ClientTrace{
+			GotConn: func(_ httptrace.GotConnInfo) {
+				cancelQuic()
+			},
+		}
+
+		wg := &sync.WaitGroup{}
+		wg.Add(2)
+		go func() { // QUIC Subroutine
+			req = req.Clone(ctxQuic)
+			res, err := cl.RoundTrip(req)
+			*subTrips = append(*subTrips, subTrip{res, err})
+		}()
+		go func() { // TCP Subroutine
+			req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+			res, err := http.DefaultTransport.RoundTrip(req)
+			*subTrips = append(*subTrips, subTrip{res, err})
+		}()
+		wg.Wait()
+
+		res0 := (*subTrips)[0]
+		res1 := (*subTrips)[1]
+		if res0.err == nil {
+			return res0.res, res0.err
+		} else if res1.err == nil {
+			return res1.res, res1.err
+		}
+		return nil, fmt.Errorf(
+			"both QUIC and TCP Failed: \nTransport(0): %w\nTransport(1): %s\n", res0.err, res1.err)
+	default:
+		return nil, fmt.Errorf("invalid value: ConnectionDiscovery")
+	}
 }
 
 // RoundTrip does a round trip.
