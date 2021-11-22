@@ -140,7 +140,7 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 		subTrips := &[]subTrip{}
 		ctxQuic, cancelQuic := context.WithCancel(req.Context())
 		trace := &httptrace.ClientTrace{
-			GotConn: func(_ httptrace.GotConnInfo) {
+			TLSHandshakeDone: func(state tls.ConnectionState, err error) {
 				cancelQuic()
 			},
 		}
@@ -151,11 +151,13 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 			req = req.Clone(ctxQuic)
 			res, err := cl.RoundTrip(req)
 			*subTrips = append(*subTrips, subTrip{res, err})
+			wg.Done()
 		}()
 		go func() { // TCP Subroutine
 			req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
-			res, err := http.DefaultTransport.RoundTrip(req)
+			res, err := new(http.Client).Do(req)
 			*subTrips = append(*subTrips, subTrip{res, err})
+			wg.Done()
 		}()
 		wg.Wait()
 

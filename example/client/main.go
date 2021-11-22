@@ -27,6 +27,7 @@ func main() {
 	keyLogFile := flag.String("keylog", "", "key log file")
 	insecure := flag.Bool("insecure", false, "skip certificate verification")
 	enableQlog := flag.Bool("qlog", false, "output a qlog (in the same directory)")
+	enableHappyEyeball := flag.Bool("eyeballs", false, "use happy eyeball instead of alt-svc (in the same directory)")
 	flag.Parse()
 	urls := flag.Args()
 
@@ -67,13 +68,19 @@ func main() {
 			return utils.NewBufferedWriteCloser(bufio.NewWriter(f), f)
 		})
 	}
+	connectionDiscovery := http3.ConnectionDiscoveryAltSvc
+	if *enableHappyEyeball {
+		connectionDiscovery = http3.ConnectionDiscoveryHappyEyeballs
+	}
+
 	roundTripper := &http3.RoundTripper{
 		TLSClientConfig: &tls.Config{
 			RootCAs:            pool,
 			InsecureSkipVerify: *insecure,
 			KeyLogWriter:       keyLog,
 		},
-		QuicConfig: &qconf,
+		QuicConfig:          &qconf,
+		ConnectionDiscovery: connectionDiscovery,
 	}
 	defer roundTripper.Close()
 	hclient := &http.Client{
