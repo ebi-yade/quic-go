@@ -27,7 +27,7 @@ func main() {
 	keyLogFile := flag.String("keylog", "", "key log file")
 	insecure := flag.Bool("insecure", false, "skip certificate verification")
 	enableQlog := flag.Bool("qlog", false, "output a qlog (in the same directory)")
-	enableHappyEyeball := flag.Bool("eyeballs", false, "use happy eyeball instead of alt-svc (in the same directory)")
+	discovery := flag.String("n", "alt-svc", "the way to find availability and endpoint detail of HTTP/3")
 	flag.Parse()
 	urls := flag.Args()
 
@@ -68,9 +68,15 @@ func main() {
 			return utils.NewBufferedWriteCloser(bufio.NewWriter(f), f)
 		})
 	}
-	connectionDiscovery := http3.ConnectionDiscoveryAltSvc
-	if *enableHappyEyeball {
+
+	var connectionDiscovery http3.ConnectionDiscovery
+	switch *discovery {
+	case "alt-svc":
+		connectionDiscovery = http3.ConnectionDiscoveryAltSvc
+	case "eyeball":
 		connectionDiscovery = http3.ConnectionDiscoveryHappyEyeballs
+	default:
+		panic("invalid option of connection discovery")
 	}
 
 	roundTripper := &http3.RoundTripper{
