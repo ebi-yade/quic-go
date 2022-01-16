@@ -161,7 +161,7 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 		r.setAltServices(req, svcs)
 		return res, err
 	case ConnectionDiscoveryHappyEyeballs:
-		subTrips := &[]subTrip{}
+		subTrips := make(map[string]subTrip)
 		ctxQuic, cancelQuic := context.WithCancel(req.Context())
 		trace := &httptrace.ClientTrace{
 			TLSHandshakeDone: func(state tls.ConnectionState, err error) {
@@ -174,26 +174,26 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 		go func() { // QUIC Subroutine
 			req = req.Clone(ctxQuic)
 			res, err := cl.RoundTrip(req)
-			*subTrips = append(*subTrips, subTrip{res, err})
+			subTrips["quic"] = subTrip{res, err}
 			wg.Done()
 		}()
 		go func() { // TCP Subroutine
 			req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
-			res, err := new(http.Client).Do(req)
-			*subTrips = append(*subTrips, subTrip{res, err})
+			res, err := tcpClient.Do(req)
+			subTrips["tcp"] = subTrip{res, err}
 			wg.Done()
 		}()
 		wg.Wait()
 
-		res0 := (*subTrips)[0]
-		res1 := (*subTrips)[1]
-		if res0.err == nil {
-			return res0.res, res0.err
-		} else if res1.err == nil {
-			return res1.res, res1.err
+		quicRes := subTrips["quic"]
+		tcpRes := subTrips["tcp"]
+		if quicRes.err == nil {
+			return quicRes.res, quicRes.err
+		} else if tcpRes.err == nil {
+			return tcpRes.res, tcpRes.err
 		}
 		return nil, fmt.Errorf(
-			"both QUIC and TCP Failed: \nTransport(0): %w\nTransport(1): %s\n", res0.err, res1.err)
+			"both QUIC and TCP Failed: \nTransport(0): %w\nTransport(1): %s\n", quicRes.err, tcpRes.err)
 	default:
 		return nil, fmt.Errorf("invalid value: ConnectionDiscovery")
 	}
