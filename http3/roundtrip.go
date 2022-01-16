@@ -142,6 +142,10 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 		return nil, err
 	}
 
+	tcp := http.DefaultTransport.(*http.Transport).Clone()
+	tcp.TLSClientConfig = &tls.Config{InsecureSkipVerify: r.TLSClientConfig.InsecureSkipVerify}
+	tcpClient := &http.Client{Transport: tcp}
+
 	switch r.ConnectionDiscovery {
 	case ConnectionDiscoveryAltSvc:
 		ownedSvcs, ok := r.getAltServices(hostname)
@@ -153,12 +157,13 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 			}
 		}
 		if ok && h3Ready {
-			return cl.RoundTrip(req)
+			res, err := cl.RoundTrip(req)
+			return res, err
 		}
-		res, err := new(http.Client).Do(req)
+		res, err := tcpClient.Do(req)
 		hdr := res.Header.Get("Alt-Svc")
 		svcs, err := altsvc.Parse(hdr)
-		r.setAltServices(req, svcs)
+		r.setAltServices(hostname, svcs)
 		return res, err
 	case ConnectionDiscoveryHappyEyeballs:
 		subTrips := make(map[string]subTrip)
