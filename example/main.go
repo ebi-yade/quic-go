@@ -11,12 +11,11 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
-
-	_ "net/http/pprof"
 
 	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/http3"
@@ -70,6 +69,10 @@ func setupHandler(www string) http.Handler {
 			w.Write(generatePRData(int(num)))
 		})
 	}
+
+	mux.HandleFunc("/index.html", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "<html><body><h1>hello!</h1></body></html>")
+	})
 
 	mux.HandleFunc("/demo/tile", func(w http.ResponseWriter, r *http.Request) {
 		// Small 40x40 png
