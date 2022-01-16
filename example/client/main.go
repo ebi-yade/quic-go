@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"sync"
 
 	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/http3"
@@ -93,30 +92,24 @@ func main() {
 		Transport: roundTripper,
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(len(urls))
 	for _, addr := range urls {
 		logger.Infof("GET %s", addr)
-		go func(addr string) {
-			rsp, err := hclient.Get(addr)
-			if err != nil {
-				log.Fatal(err)
-			}
-			logger.Infof("Got response for %s: %#v", addr, rsp)
+		rsp, err := hclient.Get(addr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		logger.Infof("Got response for %s: %#v", addr, rsp)
 
-			body := &bytes.Buffer{}
-			_, err = io.Copy(body, rsp.Body)
-			if err != nil {
-				log.Fatal(err)
-			}
-			if *quiet {
-				logger.Infof("Response Body: %d bytes", body.Len())
-			} else {
-				logger.Infof("Response Body:")
-				logger.Infof("%s", body.Bytes())
-			}
-			wg.Done()
-		}(addr)
+		body := &bytes.Buffer{}
+		_, err = io.Copy(body, rsp.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if *quiet {
+			logger.Infof("Response Body: %d bytes", body.Len())
+		} else {
+			logger.Infof("Response Body:")
+			logger.Infof("%s", body.Bytes())
+		}
 	}
-	wg.Wait()
 }
