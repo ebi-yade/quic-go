@@ -10,7 +10,9 @@ import (
 	"net/http/httptrace"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/ebi-yade/altsvc-go"
 	quic "github.com/lucas-clemente/quic-go"
 
 	"golang.org/x/net/http/httpguts"
@@ -60,6 +62,8 @@ type RoundTripper struct {
 
 	// See https://www.ietf.org/archive/id/draft-ietf-quic-http-34.html#section-3.1.
 	ConnectionDiscovery
+	// for ConnectionDiscovery: Alt-Svc
+	altSvcs map[string][]altSvc
 
 	clients map[string]roundTripCloser
 }
@@ -85,6 +89,11 @@ const (
 	ConnectionDiscoveryAltSvc ConnectionDiscovery = iota
 	ConnectionDiscoveryHappyEyeballs
 )
+
+type altSvc struct {
+	altsvc.Service
+	expiredAt time.Time
+}
 
 var _ roundTripCloser = &RoundTripper{}
 
@@ -135,7 +144,22 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 
 	switch r.ConnectionDiscovery {
 	case ConnectionDiscoveryAltSvc:
-		return cl.RoundTrip(req)
+		ownedSvcs, ok := r.getAltServices(req)
+		h3Ready := false
+		for _, s := range ownedSvcs {
+			if strings.HasPrefix(s.ProtocolID, "h3") {
+				h3Ready = true
+				break
+			}
+		}
+		if ok && h3Ready {
+			return cl.RoundTrip(req)
+		}
+		res, err := new(http.Client).Do(req)
+		hdr := res.Header.Get("Alt-Svc")
+		svcs, err := altsvc.Parse(hdr)
+		r.setAltServices(req, svcs)
+		return res, err
 	case ConnectionDiscoveryHappyEyeballs:
 		subTrips := &[]subTrip{}
 		ctxQuic, cancelQuic := context.WithCancel(req.Context())
@@ -211,6 +235,42 @@ func (r *RoundTripper) getClient(hostname string, onlyCached bool) (http.RoundTr
 		r.clients[hostname] = client
 	}
 	return client, nil
+}
+
+func (r *RoundTripper) setAltServices(req *http.Request, svcs []altsvc.Service) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	key := req.URL.Hostname()
+	val := make([]altSvc, len(svcs))
+	for _, s := range svcs {
+		if s.Clear == true {
+			delete(r.altSvcs, key)
+			return
+		}
+		v := altSvc{Service: s}
+		if v.Persist != 1 {
+			v.expiredAt = time.Now().Add(time.Duration(s.MaxAge) * time.Second)
+		}
+		val = append(val, v)
+	}
+	r.altSvcs[key] = val
+}
+
+// getAltServices returns the slice of valid altSvc.
+func (r *RoundTripper) getAltServices(req *http.Request) ([]altSvc, bool) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	key := req.URL.Hostname()
+	svcs, ok := r.altSvcs[key]
+	ret := make([]altSvc, len(svcs))
+	for _, s := range svcs {
+		if !time.Now().After(s.expiredAt) || s.Persist == 1 {
+			ret = append(ret, s)
+		}
+	}
+	return ret, ok
 }
 
 // Close closes the QUIC connections that this RoundTripper has used

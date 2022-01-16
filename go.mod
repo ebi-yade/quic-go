@@ -4,6 +4,7 @@ go 1.16
 
 require (
 	github.com/cheekybits/genny v1.0.0
+	github.com/ebi-yade/altsvc-go v0.1.1
 	github.com/francoispqt/gojay v1.2.13
 	github.com/golang/mock v1.6.0
 	github.com/marten-seemann/qpack v0.2.1
