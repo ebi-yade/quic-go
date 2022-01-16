@@ -144,7 +144,7 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 
 	switch r.ConnectionDiscovery {
 	case ConnectionDiscoveryAltSvc:
-		ownedSvcs, ok := r.getAltServices(req)
+		ownedSvcs, ok := r.getAltServices(hostname)
 		h3Ready := false
 		for _, s := range ownedSvcs {
 			if strings.HasPrefix(s.ProtocolID, "h3") {
@@ -237,15 +237,14 @@ func (r *RoundTripper) getClient(hostname string, onlyCached bool) (http.RoundTr
 	return client, nil
 }
 
-func (r *RoundTripper) setAltServices(req *http.Request, svcs []altsvc.Service) {
+func (r *RoundTripper) setAltServices(hostname string, svcs []altsvc.Service) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
-	key := req.URL.Hostname()
 	val := make([]altSvc, len(svcs))
 	for _, s := range svcs {
 		if s.Clear == true {
-			delete(r.altSvcs, key)
+			delete(r.altSvcs, hostname)
 			return
 		}
 		v := altSvc{Service: s}
@@ -254,16 +253,18 @@ func (r *RoundTripper) setAltServices(req *http.Request, svcs []altsvc.Service) 
 		}
 		val = append(val, v)
 	}
-	r.altSvcs[key] = val
+	if r.altSvcs == nil {
+		r.altSvcs = map[string][]altSvc{hostname: val}
+	}
+	r.altSvcs[hostname] = val
 }
 
 // getAltServices returns the slice of valid altSvc.
-func (r *RoundTripper) getAltServices(req *http.Request) ([]altSvc, bool) {
+func (r *RoundTripper) getAltServices(hostname string) ([]altSvc, bool) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
-	key := req.URL.Hostname()
-	svcs, ok := r.altSvcs[key]
+	svcs, ok := r.altSvcs[hostname]
 	ret := make([]altSvc, len(svcs))
 	for _, s := range svcs {
 		if !time.Now().After(s.expiredAt) || s.Persist == 1 {
