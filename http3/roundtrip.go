@@ -62,8 +62,7 @@ type RoundTripper struct {
 
 	// See https://www.ietf.org/archive/id/draft-ietf-quic-http-34.html#section-3.1.
 	ConnectionDiscovery
-	// for ConnectionDiscovery: Alt-Svc
-	altSvcs map[string][]altSvc
+	services map[string][]service
 
 	clients map[string]roundTripCloser
 }
@@ -90,7 +89,7 @@ const (
 	ConnectionDiscoveryHappyEyeballs
 )
 
-type altSvc struct {
+type service struct {
 	altsvc.Service
 	expiredAt time.Time
 }
@@ -148,7 +147,6 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 
 	switch r.ConnectionDiscovery {
 	case ConnectionDiscoveryHappyEyeballs:
-		// ctxQuic, cancelQuic := context.WithCancel(req.Context())
 		ctxQuic := req.Context()
 		quicClient, ok := cl.(*client)
 		if !ok { // TODO: return error
@@ -187,7 +185,7 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 		sub := <-resChan
 		return sub.res, sub.err
 	case ConnectionDiscoveryAltSvc:
-		ownedSvcs, ok := r.getAltServices(hostname)
+		ownedSvcs, ok := r.getServices(hostname)
 		h3Ready := false
 		for _, s := range ownedSvcs {
 			if strings.HasPrefix(s.ProtocolID, "h3") {
@@ -202,7 +200,7 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 		res, err := tcpClient.Do(req)
 		hdr := res.Header.Get("Alt-Svc")
 		svcs, err := altsvc.Parse(hdr)
-		r.setAltServices(hostname, svcs)
+		r.setServices(hostname, svcs)
 		return res, err
 	default:
 		return nil, fmt.Errorf("invalid value: ConnectionDiscovery")
@@ -247,35 +245,35 @@ func (r *RoundTripper) getClient(hostname string, onlyCached bool) (http.RoundTr
 	return client, nil
 }
 
-func (r *RoundTripper) setAltServices(hostname string, svcs []altsvc.Service) {
+func (r *RoundTripper) setServices(hostname string, svcs []altsvc.Service) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
-	val := make([]altSvc, len(svcs))
+	val := make([]service, len(svcs))
 	for _, s := range svcs {
 		if s.Clear == true {
-			delete(r.altSvcs, hostname)
+			delete(r.services, hostname)
 			return
 		}
-		v := altSvc{Service: s}
+		v := service{Service: s}
 		if v.Persist != 1 {
 			v.expiredAt = time.Now().Add(time.Duration(s.MaxAge) * time.Second)
 		}
 		val = append(val, v)
 	}
-	if r.altSvcs == nil {
-		r.altSvcs = map[string][]altSvc{hostname: val}
+	if r.services == nil {
+		r.services = map[string][]service{hostname: val}
 	}
-	r.altSvcs[hostname] = val
+	r.services[hostname] = val
 }
 
-// getAltServices returns the slice of valid altSvc.
-func (r *RoundTripper) getAltServices(hostname string) ([]altSvc, bool) {
+// getServices returns the slice of valid service.
+func (r *RoundTripper) getServices(hostname string) ([]service, bool) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
-	svcs, ok := r.altSvcs[hostname]
-	ret := make([]altSvc, len(svcs))
+	svcs, ok := r.services[hostname]
+	ret := make([]service, len(svcs))
 	for _, s := range svcs {
 		if !time.Now().After(s.expiredAt) || s.Persist == 1 {
 			ret = append(ret, s)
