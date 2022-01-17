@@ -147,24 +147,6 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 	tcpClient := &http.Client{Transport: tcp}
 
 	switch r.ConnectionDiscovery {
-	case ConnectionDiscoveryAltSvc:
-		ownedSvcs, ok := r.getAltServices(hostname)
-		h3Ready := false
-		for _, s := range ownedSvcs {
-			if strings.HasPrefix(s.ProtocolID, "h3") {
-				h3Ready = true
-				break
-			}
-		}
-		if ok && h3Ready {
-			res, err := cl.RoundTrip(req)
-			return res, err
-		}
-		res, err := tcpClient.Do(req)
-		hdr := res.Header.Get("Alt-Svc")
-		svcs, err := altsvc.Parse(hdr)
-		r.setAltServices(hostname, svcs)
-		return res, err
 	case ConnectionDiscoveryHappyEyeballs:
 		// ctxQuic, cancelQuic := context.WithCancel(req.Context())
 		ctxQuic := req.Context()
@@ -204,6 +186,24 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 		}()
 		sub := <-resChan
 		return sub.res, sub.err
+	case ConnectionDiscoveryAltSvc:
+		ownedSvcs, ok := r.getAltServices(hostname)
+		h3Ready := false
+		for _, s := range ownedSvcs {
+			if strings.HasPrefix(s.ProtocolID, "h3") {
+				h3Ready = true
+				break
+			}
+		}
+		if ok && h3Ready {
+			res, err := cl.RoundTrip(req)
+			return res, err
+		}
+		res, err := tcpClient.Do(req)
+		hdr := res.Header.Get("Alt-Svc")
+		svcs, err := altsvc.Parse(hdr)
+		r.setAltServices(hostname, svcs)
+		return res, err
 	default:
 		return nil, fmt.Errorf("invalid value: ConnectionDiscovery")
 	}
