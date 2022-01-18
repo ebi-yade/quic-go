@@ -27,6 +27,7 @@ func main() {
 	insecure := flag.Bool("insecure", false, "skip certificate verification")
 	enableQlog := flag.Bool("qlog", false, "output a qlog (in the same directory)")
 	discovery := flag.String("n", "alt-svc", "the way to find availability and endpoint detail of HTTP/3")
+	times := flag.Int("times", 1, "how many time to repeat request to the client")
 	flag.Parse()
 	urls := flag.Args()
 
@@ -78,38 +79,48 @@ func main() {
 		panic("invalid option of connection discovery")
 	}
 
-	roundTripper := &http3.RoundTripper{
-		TLSClientConfig: &tls.Config{
-			RootCAs:            pool,
-			InsecureSkipVerify: *insecure,
-			KeyLogWriter:       keyLog,
-		},
-		QuicConfig:          &qconf,
-		ConnectionDiscovery: connectionDiscovery,
-	}
-	defer roundTripper.Close()
-	hclient := &http.Client{
-		Transport: roundTripper,
-	}
-
 	for _, addr := range urls {
-		logger.Infof("GET %s", addr)
-		rsp, err := hclient.Get(addr)
-		if err != nil {
-			log.Fatal(err)
-		}
-		logger.Infof("Got response for %s: %#v", addr, rsp)
+		h3Count := 0
+		for i := 0; i < *times; i++ {
 
-		body := &bytes.Buffer{}
-		_, err = io.Copy(body, rsp.Body)
-		if err != nil {
-			log.Fatal(err)
+			// new client
+			roundTripper := &http3.RoundTripper{
+				TLSClientConfig: &tls.Config{
+					RootCAs:            pool,
+					InsecureSkipVerify: *insecure,
+					KeyLogWriter:       keyLog,
+				},
+				QuicConfig:          &qconf,
+				ConnectionDiscovery: connectionDiscovery,
+			}
+			defer roundTripper.Close()
+			client := &http.Client{
+				Transport: roundTripper,
+			}
+
+			rsp, err := client.Get(addr)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			if rsp.ProtoMajor == 3 {
+				h3Count++
+			}
+
+			if !*quiet {
+				body := &bytes.Buffer{}
+				_, err = io.Copy(body, rsp.Body)
+				if err != nil {
+					log.Fatal(err)
+				}
+				logger.Infof("Got response for %s: %#v", addr, rsp)
+				logger.Infof("Response Body: %d bytes", body.Len())
+				logger.Infof("Response Body:")
+				logger.Infof("%s", body.Bytes())
+			}
 		}
-		if *quiet {
-			logger.Infof("Response Body: %d bytes", body.Len())
-		} else {
-			logger.Infof("Response Body:")
-			logger.Infof("%s", body.Bytes())
-		}
+		logger.Infof("-----------------------------------------------------------------")
+		logger.Infof("H3 access to %s : %d times out of %d times", addr, h3Count, *times)
+		logger.Infof("-----------------------------------------------------------------")
 	}
 }
