@@ -145,6 +145,19 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 	tcp.TLSClientConfig = &tls.Config{InsecureSkipVerify: r.TLSClientConfig.InsecureSkipVerify}
 	tcpClient := &http.Client{Transport: tcp}
 
+	ownedSvcs, ok := r.getServices(hostname)
+	h3Ready := false
+	for _, s := range ownedSvcs {
+		if strings.HasPrefix(s.ProtocolID, "h3") {
+			h3Ready = true
+			break
+		}
+	}
+	if ok && h3Ready {
+		res, err := cl.RoundTrip(req)
+		return res, err
+	}
+
 	switch r.ConnectionDiscovery {
 	case ConnectionDiscoveryHappyEyeballs:
 		ctxQuic := req.Context()
@@ -180,27 +193,20 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 			res, err := tcpClient.Do(req)
 			if res != nil {
 				once.Do(func() { resChan <- subTrip{res: res, err: err} })
+				hdr := res.Header.Get("Alt-Svc")
+				if svcs, pErr := altsvc.Parse(hdr); pErr == nil {
+					r.setServices(hostname, svcs)
+				}
 			}
 		}()
 		sub := <-resChan
 		return sub.res, sub.err
 	case ConnectionDiscoveryAltSvc:
-		ownedSvcs, ok := r.getServices(hostname)
-		h3Ready := false
-		for _, s := range ownedSvcs {
-			if strings.HasPrefix(s.ProtocolID, "h3") {
-				h3Ready = true
-				break
-			}
-		}
-		if ok && h3Ready {
-			res, err := cl.RoundTrip(req)
-			return res, err
-		}
 		res, err := tcpClient.Do(req)
 		hdr := res.Header.Get("Alt-Svc")
-		svcs, err := altsvc.Parse(hdr)
-		r.setServices(hostname, svcs)
+		if svcs, pErr := altsvc.Parse(hdr); pErr == nil {
+			r.setServices(hostname, svcs)
+		}
 		return res, err
 	default:
 		return nil, fmt.Errorf("invalid value: ConnectionDiscovery")
