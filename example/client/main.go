@@ -119,8 +119,8 @@ func main() {
 				logger.Infof("%s", body.Bytes())
 			}
 		}
-		logger.Infof("-----------------------------------------------------------------")
-		logger.Infof("H3 access to %s : %d times out of %d times", addr, h3Count, *times)
-		logger.Infof("-----------------------------------------------------------------")
+		fmt.Printf("----------------------------------------------------------------\n")
+		fmt.Printf("H3 access to %s : %d times out of %d time\n", addr, h3Count, *times)
+		fmt.Printf("----------------------------------------------------------------\n")
 	}
 }
