@@ -125,11 +125,10 @@ func main() {
 			}
 			duration := roundTripper.MetricsHandshakeDone.Sub(roundTripper.MetricsHandshakeStart).Milliseconds()
 			records = append(records, float64(duration))
-			fmt.Println(duration)
-			fmt.Println(records)
 		}
 
 		mean, _ := stats.Mean(records)
+		stdev, _ := stats.StandardDeviation(records)
 		min, _ := stats.Min(records)
 		p25, _ := stats.Percentile(records, 25.0)
 		median, _ := stats.Median(records)
@@ -138,7 +137,7 @@ func main() {
 
 		fmt.Printf("----------------------------------------------------------------\n")
 		fmt.Printf("H3 access to %s : %d times out of %d time\n", addr, h3Count, *times)
-		fmt.Printf("Average time to connect: %gms\n", mean)
+		fmt.Printf("Average: %gms, Standard deviation: %gms\n", mean, stdev)
 		fmt.Printf("Box plot... %gms, %gms, %gms, %gms, %gms\n", min, p25, median, p75, max)
 		fmt.Printf("----------------------------------------------------------------\n")
 	}
