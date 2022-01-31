@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/http3"
@@ -83,7 +82,7 @@ func main() {
 
 	for _, addr := range urls {
 		h3Count := 0
-		records := make([]float64, *times)
+		records := make([]float64, 0, *times)
 		for i := 0; i < *times; i++ {
 
 			// new client
@@ -126,7 +125,8 @@ func main() {
 			}
 			duration := roundTripper.MetricsHandshakeDone.Sub(roundTripper.MetricsHandshakeStart).Milliseconds()
 			records = append(records, float64(duration))
-			time.Sleep(time.Second)
+			fmt.Println(duration)
+			fmt.Println(records)
 		}
 
 		mean, _ := stats.Mean(records)
