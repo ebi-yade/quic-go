@@ -180,8 +180,11 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 		ctxTcp := httptrace.WithClientTrace(ctxTmp, trace)
 
 		var once sync.Once
+		var quicStart sync.WaitGroup
+		quicStart.Add(1)
 		resChan := make(chan subTrip)
 		go func() { // QUIC Subroutine
+			quicStart.Done()
 			req = req.Clone(ctxQuic)
 			res, err := cl.RoundTrip(req)
 			if res != nil {
@@ -189,6 +192,8 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 			}
 		}()
 		go func() { // TCP Subroutine
+			quicStart.Wait()
+			time.Sleep(10 * time.Second)
 			req = req.Clone(ctxTcp)
 			res, err := tcpClient.Do(req)
 			if res != nil {
