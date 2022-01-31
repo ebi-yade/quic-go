@@ -193,7 +193,7 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 		}()
 		go func() { // TCP Subroutine
 			quicStart.Wait()
-			time.Sleep(10 * time.Second)
+			time.Sleep(10 * time.Millisecond)
 			req = req.Clone(ctxTcp)
 			res, err := tcpClient.Do(req)
 			if res != nil {
