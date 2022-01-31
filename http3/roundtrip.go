@@ -64,6 +64,9 @@ type RoundTripper struct {
 	ConnectionDiscovery
 	services map[string][]service
 
+	MetricsHandshakeStart time.Time
+	MetricsHandshakeDone  time.Time
+
 	clients map[string]roundTripCloser
 }
 
@@ -140,6 +143,10 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 	if err != nil {
 		return nil, err
 	}
+	quicClient, ok := cl.(*client)
+	if !ok { // TODO: return error
+		panic("client is not http3.client")
+	}
 
 	tcp := http.DefaultTransport.(*http.Transport).Clone()
 	tcp.TLSClientConfig = &tls.Config{InsecureSkipVerify: r.TLSClientConfig.InsecureSkipVerify}
@@ -154,17 +161,15 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 		}
 	}
 	if ok && h3Ready {
-		res, err := cl.RoundTrip(req)
+		res, err := quicClient.RoundTrip(req)
+		r.MetricsHandshakeDone = quicClient.metricsHandshakeDone
 		return res, err
 	}
+	r.MetricsHandshakeStart = time.Now()
 
 	switch r.ConnectionDiscovery {
 	case ConnectionDiscoveryHappyEyeballs:
 		ctxQuic := req.Context()
-		quicClient, ok := cl.(*client)
-		if !ok { // TODO: return error
-			panic("client is not http3.client")
-		}
 		ctxTmp, cancelSelf := context.WithCancel(req.Context())
 		trace := &httptrace.ClientTrace{
 			TLSHandshakeDone: func(state tls.ConnectionState, err error) {
@@ -174,6 +179,8 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 						cancelSelf()
 					default:
 					}
+				} else {
+					r.MetricsHandshakeDone = time.Now()
 				}
 			},
 		}
@@ -186,9 +193,12 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 		go func() { // QUIC Subroutine
 			quicStart.Done()
 			req = req.Clone(ctxQuic)
-			res, err := cl.RoundTrip(req)
+			res, err := quicClient.RoundTrip(req)
 			if res != nil {
-				once.Do(func() { resChan <- subTrip{res: res, err: err} })
+				once.Do(func() {
+					r.MetricsHandshakeDone = quicClient.metricsHandshakeDone
+					resChan <- subTrip{res: res, err: err}
+				})
 			}
 		}()
 		go func() { // TCP Subroutine
@@ -207,6 +217,13 @@ func (r *RoundTripper) RoundTripOpt(req *http.Request, opt RoundTripOpt) (*http.
 		sub := <-resChan
 		return sub.res, sub.err
 	case ConnectionDiscoveryAltSvc:
+		trace := &httptrace.ClientTrace{
+			TLSHandshakeDone: func(state tls.ConnectionState, err error) {
+				r.MetricsHandshakeDone = time.Now()
+			},
+		}
+		ctxTcp := httptrace.WithClientTrace(req.Context(), trace)
+		req = req.Clone(ctxTcp)
 		res, err := tcpClient.Do(req)
 		hdr := res.Header.Get("Alt-Svc")
 		if svcs, pErr := altsvc.Parse(hdr); pErr == nil {

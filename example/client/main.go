@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/http3"
@@ -18,6 +19,7 @@ import (
 	"github.com/lucas-clemente/quic-go/internal/utils"
 	"github.com/lucas-clemente/quic-go/logging"
 	"github.com/lucas-clemente/quic-go/qlog"
+	"github.com/montanaflynn/stats"
 )
 
 func main() {
@@ -81,6 +83,7 @@ func main() {
 
 	for _, addr := range urls {
 		h3Count := 0
+		records := make([]float64, *times)
 		for i := 0; i < *times; i++ {
 
 			// new client
@@ -118,9 +121,25 @@ func main() {
 				logger.Infof("Response Body:")
 				logger.Infof("%s", body.Bytes())
 			}
+			if roundTripper.MetricsHandshakeDone.IsZero() || roundTripper.MetricsHandshakeStart.IsZero() {
+				panic("metric is not available!")
+			}
+			duration := roundTripper.MetricsHandshakeDone.Sub(roundTripper.MetricsHandshakeStart).Milliseconds()
+			records = append(records, float64(duration))
+			time.Sleep(time.Second)
 		}
+
+		mean, _ := stats.Mean(records)
+		min, _ := stats.Min(records)
+		p25, _ := stats.Percentile(records, 25.0)
+		median, _ := stats.Median(records)
+		p75, _ := stats.Percentile(records, 75.0)
+		max, _ := stats.Max(records)
+
 		fmt.Printf("----------------------------------------------------------------\n")
 		fmt.Printf("H3 access to %s : %d times out of %d time\n", addr, h3Count, *times)
+		fmt.Printf("Average time to connect: %gms\n", mean)
+		fmt.Printf("Box plot... %gms, %gms, %gms, %gms, %gms\n", min, p25, median, p75, max)
 		fmt.Printf("----------------------------------------------------------------\n")
 	}
 }

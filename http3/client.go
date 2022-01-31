@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/internal/protocol"
@@ -60,6 +61,8 @@ type client struct {
 	session  quic.EarlySession
 
 	logger utils.Logger
+
+	metricsHandshakeDone time.Time
 }
 
 func newClient(
@@ -226,6 +229,7 @@ func (c *client) RoundTrip(req *http.Request) (*http.Response, error) {
 		// wait for the handshake to complete
 		select {
 		case <-c.session.HandshakeComplete().Done():
+			c.metricsHandshakeDone = time.Now()
 		case <-req.Context().Done():
 			return nil, req.Context().Err()
 		}
